@@ -1,0 +1,10 @@
+[package]
+authors = ["Jorge Aparicio <jorge@japaric.io>"]
+name = "mfrc522"
+version = "0.1.0"
+
+[dependencies.embedded-hal]
+git = "https://github.com/japaric/embedded-hal"
+
+[dependencies.nb]
+git = "https://github.com/japaric/nb"
