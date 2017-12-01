@@ -16,10 +16,8 @@
 #![no_std]
 
 extern crate embedded_hal as hal;
-#[macro_use]
-extern crate nb;
 
-use core::{fmt, mem};
+use core::mem;
 use core::marker::Unsize;
 
 use hal::blocking::spi::{self, Mode, Phase, Polarity};
@@ -80,7 +78,6 @@ const CRC_IRQ: u8 = 1 << 2;
 impl<NSS, SPI> Mfrc522<SPI, NSS>
 where
     SPI: spi::FullDuplex<u8>,
-    SPI::Error: fmt::Debug + PartialEq,
     NSS: OutputPin,
 {
     /// Creates a new driver from a SPI driver and a NSS pin
@@ -329,7 +326,7 @@ where
     fn read(&mut self, reg: Register) -> Result<u8, SPI::Error> {
         let mut buffer = [reg.read_address(), 0];
         self.nss.set_low();
-        let buffer = spi::transfer(&mut self.spi, &mut buffer)?;
+        let buffer = self.spi.transfer(&mut buffer)?;
         self.nss.set_high();
         Ok(buffer[1])
     }
@@ -343,17 +340,14 @@ where
 
         self.nss.set_low();
 
-        block!(self.spi.send(byte))?;
-        block!(self.spi.read())?;
+        self.spi.transfer(&mut [byte])?;
 
         let n = buffer.len();
         for slot in &mut buffer[..n - 1] {
-            block!(self.spi.send(byte))?;
-            *slot = block!(self.spi.read())?;
+            *slot = self.spi.transfer(&mut [byte])?[0];
         }
 
-        block!(self.spi.send(0))?;
-        buffer[n - 1] = block!(self.spi.read())?;
+        buffer[n - 1] = self.spi.transfer(&mut [0])?[0];
 
         self.nss.set_high();
 
@@ -370,9 +364,8 @@ where
     }
 
     fn write(&mut self, reg: Register, val: u8) -> Result<(), SPI::Error> {
-        let mut buffer = [reg.write_address(), val];
         self.nss.set_low();
-        spi::transfer(&mut self.spi, &mut buffer)?;
+        self.spi.write(&[reg.write_address(), val])?;
         self.nss.set_high();
 
         Ok(())
@@ -381,13 +374,8 @@ where
     fn write_many(&mut self, reg: Register, bytes: &[u8]) -> Result<(), SPI::Error> {
         self.nss.set_low();
 
-        block!(self.spi.send(reg.write_address()))?;
-        block!(self.spi.read())?;
-
-        for byte in bytes {
-            block!(self.spi.send(*byte))?;
-            block!(self.spi.read())?;
-        }
+        self.spi.write(&[reg.write_address()])?;
+        self.spi.write(bytes)?;
 
         self.nss.set_high();
 
