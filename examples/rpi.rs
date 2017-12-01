@@ -45,6 +45,24 @@ impl hal::blocking::spi::FullDuplex<u8> for MySpidev {
 
 pub struct MyPin(Pin);
 
+impl hal::digital::OutputPin for MyPin {
+    fn set_high(&mut self) {
+        self.0.set_value(1).unwrap()
+    }
+
+    fn set_low(&mut self) {
+        self.0.set_value(0).unwrap()
+    }
+
+    fn is_low(&self) -> bool {
+        self.0.get_value().unwrap() == 0
+    }
+
+    fn is_high(&self) -> bool {
+        !self.is_low()
+    }
+}
+
 // NOTE this requires tweaking permissions and configuring LED0
 //
 // ```
@@ -70,24 +88,6 @@ impl Led {
             .unwrap()
             .write_all(b"0\n")
             .unwrap();
-    }
-}
-
-impl hal::digital::OutputPin for MyPin {
-    fn set_high(&mut self) {
-        self.0.set_value(1).unwrap()
-    }
-
-    fn set_low(&mut self) {
-        self.0.set_value(0).unwrap()
-    }
-
-    fn is_low(&self) -> bool {
-        self.0.get_value().unwrap() == 0
-    }
-
-    fn is_high(&self) -> bool {
-        !self.is_low()
     }
 }
 
