@@ -43,7 +43,6 @@ impl hal::blocking::spi::FullDuplex<u8> for MySpidev {
     }
 }
 
-// NOP pin. NCS will be handled by the SPI subsystem
 pub struct MyPin(Pin);
 
 // NOTE this requires tweaking permissions and configuring LED0
