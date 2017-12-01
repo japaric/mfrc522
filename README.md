@@ -13,14 +13,14 @@
 
 ## TODO
 
-- Make sure this works with the `spidev` crate (i.e. with the Raspberry Pi)
-- Anticollision loop -- SELECT works when there's only one nearby tag
-- Authentication (`MFAuthent`)
-- Reading / writing data into the tag
-- Configurable timeout
-- Make the API non-blocking and compatible with the interrupt pin
+- [x] Make sure this works with the `spidev` crate (i.e. with the Raspberry Pi)
+- [ ] Anticollision loop -- SELECT works when there's only one nearby tag
+- [ ] Authentication (`MFAuthent`)
+- [ ] Reading / writing data into the tag
+- [ ] Configurable timeout
+- [ ] Make the API non-blocking and compatible with the interrupt pin
+- [ ] Support double and triple size UIDs -- I don't have hardware (tags) to test this.
 - ???
-- Support double and triple size UIDs -- I don't have hardware (tags) to test this.
 
 ## Examples
 
