@@ -24,10 +24,19 @@
 
 ## Examples
 
-You should find at least one example in the [blue-pill] repository. If that branch is gone, check
-the master branch.
+There's an example for the Raspberry Pi (3) in the examples directory. The example turns an LED on
+when a card is nearby and turns it off when a tag in nearby. There's a video of the example [here].
+To reproduce the example you'll have to tweak the values of the card and tag UIDs (Unique
+IDentifiers).
 
-[blue-pill]: https://github.com/japaric/blue-pill/tree/singletons/examples
+[here]: https://mobile.twitter.com/japaricious/status/936385342579539969
+
+The same example has been implemented for the [Blue Pill] development board. You'll find the code
+for that example in [this branch] of the blue-pill repository. If that branch is gone, check the
+master branch.
+
+[Blue Pill]: http://wiki.stm32duino.com/index.php?title=Blue_Pill
+[this branch]: https://github.com/japaric/blue-pill/tree/singletons/examples
 
 ## License
 
