@@ -1,6 +1,6 @@
 # `mfrc522`
 
-> A WIP, no_std, generic driver for the MFRC522 (RFID reader / writer)
+> A platform agnostic driver to interface the MFRC522 (RFID reader/writer)
 
 <p align="center">
   <img alt="MFRC522" src="https://i.imgur.com/yI4qaTO.jpg">

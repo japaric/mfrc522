@@ -11,57 +11,16 @@
 //! - PIN22 = BCM25 = NSS (SDA)
 //! - PIN6 = GND = GND
 
-extern crate embedded_hal as hal;
+extern crate linux_embedded_hal as hal;
 extern crate mfrc522;
-extern crate spidev;
-extern crate sysfs_gpio;
 
 use std::fs::File;
-use std::io::{self, Write};
+use std::io::Write;
 
+use hal::spidev::SpidevOptions;
+use hal::sysfs_gpio::Direction;
+use hal::{Pin, Spidev};
 use mfrc522::Mfrc522;
-use spidev::{Spidev, SpidevOptions, SpidevTransfer};
-use sysfs_gpio::{Direction, Pin};
-
-pub struct MySpidev(Spidev);
-
-impl hal::blocking::spi::FullDuplex<u8> for MySpidev {
-    type Error = io::Error;
-
-    fn transfer<'b>(&mut self, buffer: &'b mut [u8]) -> Result<&'b [u8], io::Error> {
-        let tx = buffer.to_owned();
-        self.0
-            .transfer(&mut SpidevTransfer::read_write(&tx, buffer))?;
-        Ok(buffer)
-    }
-
-    fn write(&mut self, bytes: &[u8]) -> Result<(), io::Error> {
-        let mut rx = bytes.to_owned();
-        self.0
-            .transfer(&mut SpidevTransfer::read_write(bytes, &mut rx))?;
-        Ok(())
-    }
-}
-
-pub struct MyPin(Pin);
-
-impl hal::digital::OutputPin for MyPin {
-    fn set_high(&mut self) {
-        self.0.set_value(1).unwrap()
-    }
-
-    fn set_low(&mut self) {
-        self.0.set_value(0).unwrap()
-    }
-
-    fn is_low(&self) -> bool {
-        self.0.get_value().unwrap() == 0
-    }
-
-    fn is_high(&self) -> bool {
-        !self.is_low()
-    }
-}
 
 // NOTE this requires tweaking permissions and configuring LED0
 //
@@ -95,7 +54,7 @@ fn main() {
     let mut spi = Spidev::open("/dev/spidev0.0").unwrap();
     let options = SpidevOptions::new()
         .max_speed_hz(1_000_000)
-        .mode(spidev::SPI_MODE_0)
+        .mode(hal::spidev::SPI_MODE_0)
         .build();
     spi.configure(&options).unwrap();
 
@@ -106,7 +65,7 @@ fn main() {
     pin.set_value(1).unwrap();
 
     let mut led = Led;
-    let mut mfrc522 = Mfrc522::new(MySpidev(spi), MyPin(pin)).unwrap();
+    let mut mfrc522 = Mfrc522::new(spi, pin).unwrap();
 
     let vers = mfrc522.version().unwrap();
 

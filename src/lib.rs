@@ -1,4 +1,16 @@
-//! A WIP, no_std, generic driver for the MFRC522 (RFID reader / writer)
+//! A platform agnostic driver to interface the MFRC522 (RFID reader/writer)
+//!
+//! This driver was built using [`embedded-hal`] traits.
+//!
+//! [`embedded-hal`]: https://docs.rs/embedded-hal/~0.1
+//!
+//! # Examples
+//!
+//! You'll find an example for the Raspeberry Pi in the `examples` directory. You should find an
+//! example for ARM Cortex-M microcontrollers on the [`blue-pill`] repository. If that branch is
+//! gone, check the master branch.
+//!
+//! [`blue-pill`]: https://github.com/japaric/blue-pill/tree/singletons/examples
 //!
 //! # References
 //!
@@ -20,7 +32,8 @@ extern crate embedded_hal as hal;
 use core::mem;
 use core::marker::Unsize;
 
-use hal::blocking::spi::{self, Mode, Phase, Polarity};
+use hal::blocking::spi;
+use hal::spi::{Mode, Phase, Polarity};
 use hal::digital::OutputPin;
 
 mod picc;
@@ -75,13 +88,13 @@ const TIMER_IRQ: u8 = 1 << 0;
 
 const CRC_IRQ: u8 = 1 << 2;
 
-impl<NSS, SPI> Mfrc522<SPI, NSS>
+impl<E, NSS, SPI> Mfrc522<SPI, NSS>
 where
-    SPI: spi::FullDuplex<u8>,
+    SPI: spi::Transfer<u8, Error = E> + spi::Write<u8, Error = E>,
     NSS: OutputPin,
 {
     /// Creates a new driver from a SPI driver and a NSS pin
-    pub fn new(spi: SPI, nss: NSS) -> Result<Self, SPI::Error> {
+    pub fn new(spi: SPI, nss: NSS) -> Result<Self, E> {
         let mut mfrc522 = Mfrc522 { spi, nss };
 
         // soft reset
@@ -113,7 +126,7 @@ where
     }
 
     /// Sends a REQuest type A to nearby PICCs
-    pub fn reqa<'b>(&mut self) -> Result<AtqA, Error<SPI::Error>> {
+    pub fn reqa<'b>(&mut self) -> Result<AtqA, Error<E>> {
         // NOTE REQA is a short frame (7 bits)
         self.transceive(&[picc::REQA], 7)
             .map(|bytes| AtqA { bytes })
@@ -124,7 +137,7 @@ where
     /// NOTE currently this only supports single size UIDs
     // TODO anticollision loop
     // TODO add optional UID to select an specific PICC
-    pub fn select(&mut self, _atqa: &AtqA) -> Result<Uid, Error<SPI::Error>> {
+    pub fn select(&mut self, _atqa: &AtqA) -> Result<Uid, Error<E>> {
         let rx = self.transceive::<[u8; 5]>(&[picc::SEL_CL1, 0x20], 0)?;
 
         assert_ne!(
@@ -174,17 +187,12 @@ where
         })
     }
 
-    /// Destroys the driver recovering the SPI peripheral and the NSS pin
-    pub fn unwrap(self) -> (SPI, NSS) {
-        (self.spi, self.nss)
-    }
-
     /// Returns the version of the MFRC522
-    pub fn version(&mut self) -> Result<u8, SPI::Error> {
+    pub fn version(&mut self) -> Result<u8, E> {
         self.read(Register::Version)
     }
 
-    fn calculate_crc(&mut self, data: &[u8]) -> Result<[u8; 2], Error<SPI::Error>> {
+    fn calculate_crc(&mut self, data: &[u8]) -> Result<[u8; 2], Error<E>> {
         // stop any ongoing command
         self.command(Command::Idle).map_err(Error::Spi)?;
 
@@ -218,7 +226,7 @@ where
         }
     }
 
-    fn check_error_register(&mut self) -> Result<(), Error<SPI::Error>> {
+    fn check_error_register(&mut self) -> Result<(), Error<E>> {
         const PROTOCOL_ERR: u8 = 1 << 0;
         const PARITY_ERR: u8 = 1 << 1;
         const CRC_ERR: u8 = 1 << 2;
@@ -248,11 +256,11 @@ where
         }
     }
 
-    fn command(&mut self, command: Command) -> Result<(), SPI::Error> {
+    fn command(&mut self, command: Command) -> Result<(), E> {
         self.write(Register::Command, command.value())
     }
 
-    fn flush_fifo_buffer(&mut self) -> Result<(), SPI::Error> {
+    fn flush_fifo_buffer(&mut self) -> Result<(), E> {
         self.write(Register::FifoLevel, 1 << 7)
     }
 
@@ -260,7 +268,7 @@ where
         &mut self,
         tx_buffer: &[u8],
         tx_last_bits: u8,
-    ) -> Result<RX, Error<SPI::Error>>
+    ) -> Result<RX, Error<E>>
     where
         RX: Unsize<[u8]>,
     {
@@ -323,7 +331,7 @@ where
     }
 
     // lowest level  API
-    fn read(&mut self, reg: Register) -> Result<u8, SPI::Error> {
+    fn read(&mut self, reg: Register) -> Result<u8, E> {
         let mut buffer = [reg.read_address(), 0];
         self.nss.set_low();
         let buffer = self.spi.transfer(&mut buffer)?;
@@ -335,7 +343,7 @@ where
         &mut self,
         reg: Register,
         buffer: &'b mut [u8],
-    ) -> Result<&'b [u8], SPI::Error> {
+    ) -> Result<&'b [u8], E> {
         let byte = reg.read_address();
 
         self.nss.set_low();
@@ -354,7 +362,7 @@ where
         Ok(buffer)
     }
 
-    fn rmw<F>(&mut self, reg: Register, f: F) -> Result<(), SPI::Error>
+    fn rmw<F>(&mut self, reg: Register, f: F) -> Result<(), E>
     where
         F: FnOnce(u8) -> u8,
     {
@@ -363,7 +371,7 @@ where
         Ok(())
     }
 
-    fn write(&mut self, reg: Register, val: u8) -> Result<(), SPI::Error> {
+    fn write(&mut self, reg: Register, val: u8) -> Result<(), E> {
         self.nss.set_low();
         self.spi.write(&[reg.write_address(), val])?;
         self.nss.set_high();
@@ -371,7 +379,7 @@ where
         Ok(())
     }
 
-    fn write_many(&mut self, reg: Register, bytes: &[u8]) -> Result<(), SPI::Error> {
+    fn write_many(&mut self, reg: Register, bytes: &[u8]) -> Result<(), E> {
         self.nss.set_low();
 
         self.spi.write(&[reg.write_address()])?;

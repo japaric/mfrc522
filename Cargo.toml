@@ -1,11 +1,16 @@
 [package]
 authors = ["Jorge Aparicio <jorge@japaric.io>"]
+categories = ["embedded", "hardware-support", "no-std"]
+description = "A platform agnostic driver to interface the MFRC522 (RFID reader/writer)"
+documentation = "https://docs.rs/mfrc522"
+keywords = ["embedded-hal", "rfid"]
+license = "MIT OR Apache-2.0"
 name = "mfrc522"
+repository = "https://github.com/japaric/mfrc522"
 version = "0.1.0"
 
 [dependencies.embedded-hal]
-git = "https://github.com/japaric/embedded-hal"
+version = "0.1.0"
 
 [dev-dependencies]
-spidev = "0.3.0"
-sysfs_gpio = "0.5.1"
+linux-embedded-hal = "0.1.0"
