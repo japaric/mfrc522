@@ -1,14 +1,9 @@
 set -euxo pipefail
 
 main() {
-    case $TARGET in
-        thumbv*-none-eabi*)
-            cargo install --list | grep xargo || \
-                cargo install xargo
-            rustup component list | grep 'rust-src.*installed' || \
-                rustup component add rust-src
-            ;;
-    esac
+    if [ $TARGET != x86_64-unknown-linux-gnu ]; then
+        rustup target add $TARGET
+    fi
 }
 
 main

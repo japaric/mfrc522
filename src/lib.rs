@@ -24,17 +24,18 @@
 #![allow(dead_code)]
 #![deny(missing_docs)]
 #![deny(warnings)]
-#![feature(unsize)]
 #![no_std]
 
 extern crate embedded_hal as hal;
+extern crate generic_array;
 
 use core::mem;
-use core::marker::Unsize;
 
+use generic_array::typenum::consts::*;
+use generic_array::{ArrayLength, GenericArray};
 use hal::blocking::spi;
-use hal::spi::{Mode, Phase, Polarity};
 use hal::digital::OutputPin;
+use hal::spi::{Mode, Phase, Polarity};
 
 mod picc;
 
@@ -138,7 +139,7 @@ where
     // TODO anticollision loop
     // TODO add optional UID to select an specific PICC
     pub fn select(&mut self, _atqa: &AtqA) -> Result<Uid, Error<E>> {
-        let rx = self.transceive::<[u8; 5]>(&[picc::SEL_CL1, 0x20], 0)?;
+        let rx = self.transceive::<U5>(&[picc::SEL_CL1, 0x20], 0)?;
 
         assert_ne!(
             rx[0],
@@ -163,7 +164,7 @@ where
         tx[7..].copy_from_slice(&crc);
 
         // enable automatic CRC validation during reception
-        let rx2 = self.transceive::<[u8; 3]>(&tx, 0)?;
+        let rx2 = self.transceive::<U3>(&tx, 0)?;
 
         let crc2 = self.calculate_crc(&rx2[..1])?;
 
@@ -268,9 +269,9 @@ where
         &mut self,
         tx_buffer: &[u8],
         tx_last_bits: u8,
-    ) -> Result<RX, Error<E>>
+    ) -> Result<GenericArray<u8, RX>, Error<E>>
     where
-        RX: Unsize<[u8]>,
+        RX: ArrayLength<u8>,
     {
         // stop any ongoing command
         self.command(Command::Idle).map_err(Error::Spi)?;
@@ -312,7 +313,7 @@ where
         // }
 
         // grab RX data
-        let mut rx_buffer: RX = unsafe { mem::uninitialized() };
+        let mut rx_buffer: GenericArray<u8, RX> = unsafe { mem::uninitialized() };
 
         {
             let rx_buffer: &mut [u8] = &mut rx_buffer;
@@ -341,11 +342,7 @@ where
         })
     }
 
-    fn read_many<'b>(
-        &mut self,
-        reg: Register,
-        buffer: &'b mut [u8],
-    ) -> Result<&'b [u8], E> {
+    fn read_many<'b>(&mut self, reg: Register, buffer: &'b mut [u8]) -> Result<&'b [u8], E> {
         let byte = reg.read_address();
 
         self.with_nss_low(move |mfr| {
@@ -477,7 +474,7 @@ impl Register {
 
 /// Answer To reQuest A
 pub struct AtqA {
-    bytes: [u8; 2],
+    bytes: GenericArray<u8, U2>,
 }
 
 /// Single size UID
