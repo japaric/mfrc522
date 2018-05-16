@@ -6,6 +6,7 @@ main() {
     case $TARGET in
         armv*)
             cat >> Cargo.toml <<'EOF'
+
 [dev-dependencies]
 linux-embedded-hal = "0.2.0"
 EOF
