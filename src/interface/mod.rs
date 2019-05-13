@@ -5,7 +5,11 @@ use Register;
 /// SPI communication interface
 pub mod spi;
 
+/// Serial communication interface
+pub mod serial;
+
 pub use self::spi::SpiInterface;
+pub use self::serial::SerialInterface;
 
 /// Trait for implementing a communication interface for MFRC522
 pub trait Mfrc522Interface {

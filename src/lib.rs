@@ -28,6 +28,8 @@
 
 extern crate embedded_hal as hal;
 extern crate generic_array;
+#[macro_use]
+extern crate nb;
 
 use core::mem;
 
@@ -37,6 +39,7 @@ use generic_array::{ArrayLength, GenericArray};
 #[allow(deprecated)]
 use hal::digital::OutputPin;
 use hal::blocking::spi;
+use hal::serial;
 
 pub mod interface;
 use interface::*;
@@ -92,6 +95,18 @@ impl<SPI, NSS> Mfrc522<SpiInterface<SPI, NSS>> {
         NSS: OutputPin
     {
         Mfrc522::new(SpiInterface::new(spi, nss))
+    }
+}
+
+impl<W, R> Mfrc522<SerialInterface<W, R>> {
+    /// Creates a new driver using the provided serial read/write halves.
+    pub fn new_serial<E>(write: W, read: R)
+        -> Result<Mfrc522<SerialInterface<W, R>>, E>
+    where
+        W: serial::Write<u8, Error = E>,
+        R: serial::Read<u8, Error = E>,
+    {
+        Mfrc522::new(SerialInterface::new(write, read))
     }
 }
 
@@ -395,20 +410,6 @@ pub enum Register {
     TxControl = 0x14,
     TxMode = 0x12,
     Version = 0x37,
-}
-
-const R: u8 = 1 << 7;
-#[allow(dead_code)]
-const W: u8 = 0 << 7;
-
-impl Register {
-    fn read_address(&self) -> u8 {
-        ((*self as u8) << 1) | R
-    }
-
-    fn write_address(&self) -> u8 {
-        ((*self as u8) << 1) | W
-    }
 }
 
 /// Answer To reQuest A

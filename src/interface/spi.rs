@@ -53,14 +53,14 @@ where
     fn read_many<'b>(&mut self, reg: Register, buffer: &'b mut [u8])
         -> Result<&'b [u8], Self::Error>
     {
-        let byte = reg.read_address();
+        let addr = ((reg as u8) << 1) | (1 << 7);
 
         self.with_nss_low(move |mfr| {
-            mfr.spi.transfer(&mut [byte])?;
+            mfr.spi.transfer(&mut [addr])?;
 
             let n = buffer.len();
             for slot in &mut buffer[..n - 1] {
-                *slot = mfr.spi.transfer(&mut [byte])?[0];
+                *slot = mfr.spi.transfer(&mut [addr])?[0];
             }
 
             buffer[n - 1] = mfr.spi.transfer(&mut [0])?[0];
@@ -70,8 +70,10 @@ where
     }
 
     fn write_many(&mut self, reg: Register, bytes: &[u8]) -> Result<(), Self::Error> {
+        let addr = (reg as u8) << 1;
+
         self.with_nss_low(|mfr| {
-            mfr.spi.write(&[reg.write_address()])?;
+            mfr.spi.write(&[addr])?;
             mfr.spi.write(bytes)?;
 
             Ok(())
