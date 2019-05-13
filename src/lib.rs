@@ -33,9 +33,13 @@ use core::mem;
 
 use generic_array::typenum::consts::*;
 use generic_array::{ArrayLength, GenericArray};
-use hal::blocking::spi;
+
+#[allow(deprecated)]
 use hal::digital::OutputPin;
-use hal::spi::{Mode, Phase, Polarity};
+use hal::blocking::spi;
+
+pub mod interface;
+use interface::*;
 
 mod picc;
 
@@ -58,28 +62,17 @@ pub enum Error<E> {
     Parity,
     /// Error during MFAuthent operation
     Protocol,
-    /// SPI bus error
-    Spi(E),
+    /// Interface error
+    Interface(E),
     /// Timeout
     Timeout,
     /// ???
     Wr,
 }
 
-// XXX coherence :-(
-// impl<SPI> From<SPI::Error> for Error<SPI>
-// where
-//     SPI: spi::FullDuplex<u8>,
-// {
-//     fn from(e: SPI::Error) -> Error<SPI> {
-//         Error::Spi(e)
-//     }
-// }
-
 /// MFRC522 driver
-pub struct Mfrc522<SPI, NSS> {
-    spi: SPI,
-    nss: NSS,
+pub struct Mfrc522<IF> {
+    iface: IF,
 }
 
 const ERR_IRQ: u8 = 1 << 1;
@@ -89,39 +82,51 @@ const TIMER_IRQ: u8 = 1 << 0;
 
 const CRC_IRQ: u8 = 1 << 2;
 
-impl<E, NSS, SPI> Mfrc522<SPI, NSS>
+impl<SPI, NSS> Mfrc522<SpiInterface<SPI, NSS>> {
+    /// Creates a new driver using the provided SPI peripheral and NSS pin.
+    #[allow(deprecated)]
+    pub fn new_spi<E>(spi: SPI, nss: NSS)
+        -> Result<Mfrc522<SpiInterface<SPI, NSS>>, E>
+    where
+        SPI: spi::Transfer<u8, Error = E> + spi::Write<u8, Error = E>,
+        NSS: OutputPin
+    {
+        Mfrc522::new(SpiInterface::new(spi, nss))
+    }
+}
+
+impl<E, IF> Mfrc522<IF>
 where
-    SPI: spi::Transfer<u8, Error = E> + spi::Write<u8, Error = E>,
-    NSS: OutputPin,
+    IF: Mfrc522Interface<Error = E>
 {
-    /// Creates a new driver from a SPI driver and a NSS pin
-    pub fn new(spi: SPI, nss: NSS) -> Result<Self, E> {
-        let mut mfrc522 = Mfrc522 { spi, nss };
+    /// Creates a new driver with the provided interface
+    pub fn new(iface: IF) -> Result<Self, E> {
+        let mut mfrc522 = Mfrc522 { iface };
 
         // soft reset
         mfrc522.command(Command::SoftReset)?;
 
-        while mfrc522.read(Register::Command)? & (1 << 4) != 0 {}
+        while mfrc522.iface.read(Register::Command)? & (1 << 4) != 0 {}
 
         // configure timer to operate at 10 KHz.
         // f_timer = 13.56 MHz / (2 + TPrescaler + 2)
-        mfrc522.write(Register::Demod, 0x4d | (1 << 4))?;
-        mfrc522.write(Register::TMode, 0x0 | (1 << 7) | 0b10)?;
-        mfrc522.write(Register::TPrescaler, 165)?;
+        mfrc522.iface.write(Register::Demod, 0x4d | (1 << 4))?;
+        mfrc522.iface.write(Register::TMode, 0x0 | (1 << 7) | 0b10)?;
+        mfrc522.iface.write(Register::TPrescaler, 165)?;
 
         // configure timer for a 5 ms timeout
-        mfrc522.write(Register::ReloadL, 50)?;
+        mfrc522.iface.write(Register::ReloadL, 50)?;
 
         // forces 100% ASK modulation
         // NOTE my tags don't work without this ...
-        mfrc522.write(Register::TxAsk, 1 << 6)?;
+        mfrc522.iface.write(Register::TxAsk, 1 << 6)?;
 
         // set preset value for the CRC co-processor to 0x6363
         // in accordance to section 6.2.4 of ISO/IEC FCD 14443-3
-        mfrc522.write(Register::Mode, (0x3f & (!0b11)) | 0b01)?;
+        mfrc522.iface.write(Register::Mode, (0x3f & (!0b11)) | 0b01)?;
 
         // enable the antenna
-        mfrc522.write(Register::TxControl, 0x80 | 0b11)?;
+        mfrc522.iface.write(Register::TxControl, 0x80 | 0b11)?;
 
         Ok(mfrc522)
     }
@@ -190,36 +195,36 @@ where
 
     /// Returns the version of the MFRC522
     pub fn version(&mut self) -> Result<u8, E> {
-        self.read(Register::Version)
+        self.iface.read(Register::Version)
     }
 
     fn calculate_crc(&mut self, data: &[u8]) -> Result<[u8; 2], Error<E>> {
         // stop any ongoing command
-        self.command(Command::Idle).map_err(Error::Spi)?;
+        self.command(Command::Idle).map_err(Error::Interface)?;
 
         // clear the CRC_IRQ interrupt flag
-        self.write(Register::DivIrq, 1 << 2).map_err(Error::Spi)?;
+        self.iface.write(Register::DivIrq, 1 << 2).map_err(Error::Interface)?;
 
         // flush FIFO buffer
-        self.flush_fifo_buffer().map_err(Error::Spi)?;
+        self.flush_fifo_buffer().map_err(Error::Interface)?;
 
         // write data to transmit to the FIFO buffer
-        self.write_many(Register::FifoData, data)
-            .map_err(Error::Spi)?;
+        self.iface.write_many(Register::FifoData, data)
+            .map_err(Error::Interface)?;
 
-        self.command(Command::CalcCRC).map_err(Error::Spi)?;
+        self.command(Command::CalcCRC).map_err(Error::Interface)?;
 
         // TODO timeout when connection to the MFRC522 is lost
         // wait for CRC to complete
         let mut irq;
         loop {
-            irq = self.read(Register::DivIrq).map_err(Error::Spi)?;
+            irq = self.iface.read(Register::DivIrq).map_err(Error::Interface)?;
 
             if irq & CRC_IRQ != 0 {
-                self.command(Command::Idle).map_err(Error::Spi)?;
+                self.command(Command::Idle).map_err(Error::Interface)?;
                 let crc = [
-                    self.read(Register::CrcResultL).map_err(Error::Spi)?,
-                    self.read(Register::CrcResultH).map_err(Error::Spi)?,
+                    self.iface.read(Register::CrcResultL).map_err(Error::Interface)?,
+                    self.iface.read(Register::CrcResultH).map_err(Error::Interface)?,
                 ];
 
                 break Ok(crc);
@@ -236,7 +241,7 @@ where
         const TEMP_ERR: u8 = 1 << 6;
         const WR_ERR: u8 = 1 << 7;
 
-        let err = self.read(Register::Error).map_err(Error::Spi)?;
+        let err = self.iface.read(Register::Error).map_err(Error::Interface)?;
 
         if err & PROTOCOL_ERR != 0 {
             Err(Error::Protocol)
@@ -258,11 +263,11 @@ where
     }
 
     fn command(&mut self, command: Command) -> Result<(), E> {
-        self.write(Register::Command, command.value())
+        self.iface.write(Register::Command, command.value())
     }
 
     fn flush_fifo_buffer(&mut self) -> Result<(), E> {
-        self.write(Register::FifoLevel, 1 << 7)
+        self.iface.write(Register::FifoLevel, 1 << 7)
     }
 
     fn transceive<RX>(
@@ -274,30 +279,30 @@ where
         RX: ArrayLength<u8>,
     {
         // stop any ongoing command
-        self.command(Command::Idle).map_err(Error::Spi)?;
+        self.command(Command::Idle).map_err(Error::Interface)?;
 
         // clear all interrupt flags
-        self.write(Register::ComIrq, 0x7f).map_err(Error::Spi)?;
+        self.iface.write(Register::ComIrq, 0x7f).map_err(Error::Interface)?;
 
         // flush FIFO buffer
-        self.flush_fifo_buffer().map_err(Error::Spi)?;
+        self.flush_fifo_buffer().map_err(Error::Interface)?;
 
         // write data to transmit to the FIFO buffer
-        self.write_many(Register::FifoData, tx_buffer)
-            .map_err(Error::Spi)?;
+        self.iface.write_many(Register::FifoData, tx_buffer)
+            .map_err(Error::Interface)?;
 
         // signal command
-        self.command(Command::Transceive).map_err(Error::Spi)?;
+        self.command(Command::Transceive).map_err(Error::Interface)?;
 
         // configure short frame and start transmission
-        self.write(Register::BitFraming, (1 << 7) | tx_last_bits)
-            .map_err(Error::Spi)?;
+        self.iface.write(Register::BitFraming, (1 << 7) | tx_last_bits)
+            .map_err(Error::Interface)?;
 
         // TODO timeout when connection to the MFRC522 is lost (?)
         // wait for transmission + reception to complete
         let mut irq;
         loop {
-            irq = self.read(Register::ComIrq).map_err(Error::Spi)?;
+            irq = self.iface.read(Register::ComIrq).map_err(Error::Interface)?;
 
             if irq & (RX_IRQ | ERR_IRQ | IDLE_IRQ) != 0 {
                 break;
@@ -318,86 +323,19 @@ where
         {
             let rx_buffer: &mut [u8] = &mut rx_buffer;
 
-            let received_bytes = self.read(Register::FifoLevel).map_err(Error::Spi)?;
+            let received_bytes = self.iface.read(Register::FifoLevel).map_err(Error::Interface)?;
 
             if received_bytes as usize != rx_buffer.len() {
                 return Err(Error::IncompleteFrame);
             }
 
-            self.read_many(Register::FifoData, rx_buffer)
-                .map_err(Error::Spi)?;
+            self.iface.read_many(Register::FifoData, rx_buffer)
+                .map_err(Error::Interface)?;
         }
 
         Ok(rx_buffer)
     }
-
-    // lowest level  API
-    fn read(&mut self, reg: Register) -> Result<u8, E> {
-        let mut buffer = [reg.read_address(), 0];
-
-        self.with_nss_low(|mfr| {
-            let buffer = mfr.spi.transfer(&mut buffer)?;
-
-            Ok(buffer[1])
-        })
-    }
-
-    fn read_many<'b>(&mut self, reg: Register, buffer: &'b mut [u8]) -> Result<&'b [u8], E> {
-        let byte = reg.read_address();
-
-        self.with_nss_low(move |mfr| {
-            mfr.spi.transfer(&mut [byte])?;
-
-            let n = buffer.len();
-            for slot in &mut buffer[..n - 1] {
-                *slot = mfr.spi.transfer(&mut [byte])?[0];
-            }
-
-            buffer[n - 1] = mfr.spi.transfer(&mut [0])?[0];
-
-            Ok(&*buffer)
-        })
-    }
-
-    fn rmw<F>(&mut self, reg: Register, f: F) -> Result<(), E>
-    where
-        F: FnOnce(u8) -> u8,
-    {
-        let byte = self.read(reg)?;
-        self.write(reg, f(byte))?;
-        Ok(())
-    }
-
-    fn write(&mut self, reg: Register, val: u8) -> Result<(), E> {
-        self.with_nss_low(|mfr| mfr.spi.write(&[reg.write_address(), val]))
-    }
-
-    fn write_many(&mut self, reg: Register, bytes: &[u8]) -> Result<(), E> {
-        self.with_nss_low(|mfr| {
-            mfr.spi.write(&[reg.write_address()])?;
-            mfr.spi.write(bytes)?;
-
-            Ok(())
-        })
-    }
-
-    fn with_nss_low<F, T>(&mut self, f: F) -> T
-    where
-        F: FnOnce(&mut Self) -> T,
-    {
-        self.nss.set_low();
-        let result = f(self);
-        self.nss.set_high();
-
-        result
-    }
 }
-
-/// SPI mode
-pub const MODE: Mode = Mode {
-    polarity: Polarity::IdleLow,
-    phase: Phase::CaptureOnFirstTransition,
-};
 
 #[derive(Clone, Copy)]
 enum Command {
@@ -431,7 +369,8 @@ impl Command {
 }
 
 #[derive(Clone, Copy)]
-enum Register {
+#[allow(missing_docs)]
+pub enum Register {
     BitFraming = 0x0d,
     Coll = 0x0e,
     ComIrq = 0x04,
