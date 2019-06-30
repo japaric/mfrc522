@@ -34,14 +34,14 @@ use core::mem;
 use generic_array::typenum::consts::*;
 use generic_array::{ArrayLength, GenericArray};
 use hal::blocking::spi;
-use hal::digital::OutputPin;
+use hal::digital::v2::OutputPin;
 use hal::spi::{Mode, Phase, Polarity};
 
 mod picc;
 
 /// Errors
 #[derive(Debug)]
-pub enum Error<E> {
+pub enum Error<E, OPE> {
     /// Wrong Block Character Check (BCC)
     Bcc,
     /// FIFO buffer overflow
@@ -64,6 +64,8 @@ pub enum Error<E> {
     Timeout,
     /// ???
     Wr,
+    /// Output pin operation failed
+    OutputPin(OPE),
 }
 
 // XXX coherence :-(
@@ -89,13 +91,13 @@ const TIMER_IRQ: u8 = 1 << 0;
 
 const CRC_IRQ: u8 = 1 << 2;
 
-impl<E, NSS, SPI> Mfrc522<SPI, NSS>
+impl<E, OPE, NSS, SPI> Mfrc522<SPI, NSS>
 where
     SPI: spi::Transfer<u8, Error = E> + spi::Write<u8, Error = E>,
-    NSS: OutputPin,
+    NSS: OutputPin<Error = OPE>,
 {
     /// Creates a new driver from a SPI driver and a NSS pin
-    pub fn new(spi: SPI, nss: NSS) -> Result<Self, E> {
+    pub fn new(spi: SPI, nss: NSS) -> Result<Self, Error<E, OPE>> {
         let mut mfrc522 = Mfrc522 { spi, nss };
 
         // soft reset
@@ -127,7 +129,7 @@ where
     }
 
     /// Sends a REQuest type A to nearby PICCs
-    pub fn reqa<'b>(&mut self) -> Result<AtqA, Error<E>> {
+    pub fn reqa<'b>(&mut self) -> Result<AtqA, Error<E, OPE>> {
         // NOTE REQA is a short frame (7 bits)
         self.transceive(&[picc::REQA], 7)
             .map(|bytes| AtqA { bytes })
@@ -138,7 +140,7 @@ where
     /// NOTE currently this only supports single size UIDs
     // TODO anticollision loop
     // TODO add optional UID to select an specific PICC
-    pub fn select(&mut self, _atqa: &AtqA) -> Result<Uid, Error<E>> {
+    pub fn select(&mut self, _atqa: &AtqA) -> Result<Uid, Error<E, OPE>> {
         let rx = self.transceive::<U5>(&[picc::SEL_CL1, 0x20], 0)?;
 
         assert_ne!(
@@ -189,37 +191,36 @@ where
     }
 
     /// Returns the version of the MFRC522
-    pub fn version(&mut self) -> Result<u8, E> {
+    pub fn version(&mut self) -> Result<u8, Error<E, OPE>> {
         self.read(Register::Version)
     }
 
-    fn calculate_crc(&mut self, data: &[u8]) -> Result<[u8; 2], Error<E>> {
+    fn calculate_crc(&mut self, data: &[u8]) -> Result<[u8; 2], Error<E, OPE>> {
         // stop any ongoing command
-        self.command(Command::Idle).map_err(Error::Spi)?;
+        self.command(Command::Idle)?;
 
         // clear the CRC_IRQ interrupt flag
-        self.write(Register::DivIrq, 1 << 2).map_err(Error::Spi)?;
+        self.write(Register::DivIrq, 1 << 2)?;
 
         // flush FIFO buffer
-        self.flush_fifo_buffer().map_err(Error::Spi)?;
+        self.flush_fifo_buffer()?;
 
         // write data to transmit to the FIFO buffer
-        self.write_many(Register::FifoData, data)
-            .map_err(Error::Spi)?;
+        self.write_many(Register::FifoData, data)?;
 
-        self.command(Command::CalcCRC).map_err(Error::Spi)?;
+        self.command(Command::CalcCRC)?;
 
         // TODO timeout when connection to the MFRC522 is lost
         // wait for CRC to complete
         let mut irq;
         loop {
-            irq = self.read(Register::DivIrq).map_err(Error::Spi)?;
+            irq = self.read(Register::DivIrq)?;
 
             if irq & CRC_IRQ != 0 {
-                self.command(Command::Idle).map_err(Error::Spi)?;
+                self.command(Command::Idle)?;
                 let crc = [
-                    self.read(Register::CrcResultL).map_err(Error::Spi)?,
-                    self.read(Register::CrcResultH).map_err(Error::Spi)?,
+                    self.read(Register::CrcResultL)?,
+                    self.read(Register::CrcResultH)?,
                 ];
 
                 break Ok(crc);
@@ -227,7 +228,7 @@ where
         }
     }
 
-    fn check_error_register(&mut self) -> Result<(), Error<E>> {
+    fn check_error_register(&mut self) -> Result<(), Error<E, OPE>> {
         const PROTOCOL_ERR: u8 = 1 << 0;
         const PARITY_ERR: u8 = 1 << 1;
         const CRC_ERR: u8 = 1 << 2;
@@ -236,7 +237,7 @@ where
         const TEMP_ERR: u8 = 1 << 6;
         const WR_ERR: u8 = 1 << 7;
 
-        let err = self.read(Register::Error).map_err(Error::Spi)?;
+        let err = self.read(Register::Error)?;
 
         if err & PROTOCOL_ERR != 0 {
             Err(Error::Protocol)
@@ -257,11 +258,11 @@ where
         }
     }
 
-    fn command(&mut self, command: Command) -> Result<(), E> {
+    fn command(&mut self, command: Command) -> Result<(), Error<E, OPE>> {
         self.write(Register::Command, command.value())
     }
 
-    fn flush_fifo_buffer(&mut self) -> Result<(), E> {
+    fn flush_fifo_buffer(&mut self) -> Result<(), Error<E, OPE>> {
         self.write(Register::FifoLevel, 1 << 7)
     }
 
@@ -269,35 +270,33 @@ where
         &mut self,
         tx_buffer: &[u8],
         tx_last_bits: u8,
-    ) -> Result<GenericArray<u8, RX>, Error<E>>
+    ) -> Result<GenericArray<u8, RX>, Error<E, OPE>>
     where
         RX: ArrayLength<u8>,
     {
         // stop any ongoing command
-        self.command(Command::Idle).map_err(Error::Spi)?;
+        self.command(Command::Idle)?;
 
         // clear all interrupt flags
-        self.write(Register::ComIrq, 0x7f).map_err(Error::Spi)?;
+        self.write(Register::ComIrq, 0x7f)?;
 
         // flush FIFO buffer
-        self.flush_fifo_buffer().map_err(Error::Spi)?;
+        self.flush_fifo_buffer()?;
 
         // write data to transmit to the FIFO buffer
-        self.write_many(Register::FifoData, tx_buffer)
-            .map_err(Error::Spi)?;
+        self.write_many(Register::FifoData, tx_buffer)?;
 
         // signal command
-        self.command(Command::Transceive).map_err(Error::Spi)?;
+        self.command(Command::Transceive)?;
 
         // configure short frame and start transmission
-        self.write(Register::BitFraming, (1 << 7) | tx_last_bits)
-            .map_err(Error::Spi)?;
+        self.write(Register::BitFraming, (1 << 7) | tx_last_bits)?;
 
         // TODO timeout when connection to the MFRC522 is lost (?)
         // wait for transmission + reception to complete
         let mut irq;
         loop {
-            irq = self.read(Register::ComIrq).map_err(Error::Spi)?;
+            irq = self.read(Register::ComIrq)?;
 
             if irq & (RX_IRQ | ERR_IRQ | IDLE_IRQ) != 0 {
                 break;
@@ -318,21 +317,20 @@ where
         {
             let rx_buffer: &mut [u8] = &mut rx_buffer;
 
-            let received_bytes = self.read(Register::FifoLevel).map_err(Error::Spi)?;
+            let received_bytes = self.read(Register::FifoLevel)?;
 
             if received_bytes as usize != rx_buffer.len() {
                 return Err(Error::IncompleteFrame);
             }
 
-            self.read_many(Register::FifoData, rx_buffer)
-                .map_err(Error::Spi)?;
+            self.read_many(Register::FifoData, rx_buffer)?;
         }
 
         Ok(rx_buffer)
     }
 
     // lowest level  API
-    fn read(&mut self, reg: Register) -> Result<u8, E> {
+    fn read(&mut self, reg: Register) -> Result<u8, Error<E, OPE>> {
         let mut buffer = [reg.read_address(), 0];
 
         self.with_nss_low(|mfr| {
@@ -342,7 +340,11 @@ where
         })
     }
 
-    fn read_many<'b>(&mut self, reg: Register, buffer: &'b mut [u8]) -> Result<&'b [u8], E> {
+    fn read_many<'b>(
+        &mut self,
+        reg: Register,
+        buffer: &'b mut [u8],
+    ) -> Result<&'b [u8], Error<E, OPE>> {
         let byte = reg.read_address();
 
         self.with_nss_low(move |mfr| {
@@ -359,7 +361,7 @@ where
         })
     }
 
-    fn rmw<F>(&mut self, reg: Register, f: F) -> Result<(), E>
+    fn rmw<F>(&mut self, reg: Register, f: F) -> Result<(), Error<E, OPE>>
     where
         F: FnOnce(u8) -> u8,
     {
@@ -368,11 +370,11 @@ where
         Ok(())
     }
 
-    fn write(&mut self, reg: Register, val: u8) -> Result<(), E> {
+    fn write(&mut self, reg: Register, val: u8) -> Result<(), Error<E, OPE>> {
         self.with_nss_low(|mfr| mfr.spi.write(&[reg.write_address(), val]))
     }
 
-    fn write_many(&mut self, reg: Register, bytes: &[u8]) -> Result<(), E> {
+    fn write_many(&mut self, reg: Register, bytes: &[u8]) -> Result<(), Error<E, OPE>> {
         self.with_nss_low(|mfr| {
             mfr.spi.write(&[reg.write_address()])?;
             mfr.spi.write(bytes)?;
@@ -381,15 +383,18 @@ where
         })
     }
 
-    fn with_nss_low<F, T>(&mut self, f: F) -> T
+    fn with_nss_low<F, T>(&mut self, f: F) -> Result<T, Error<E, OPE>>
     where
-        F: FnOnce(&mut Self) -> T,
+        F: FnOnce(&mut Self) -> Result<T, E>,
     {
-        self.nss.set_low();
-        let result = f(self);
-        self.nss.set_high();
+        self.nss.set_low().map_err(Error::OutputPin)?;
+        let f_result = f(self).map_err(Error::Spi);
+        let pin_result = self.nss.set_high().map_err(Error::OutputPin);
 
-        result
+        if f_result.is_ok() {
+            pin_result?;
+        }
+        f_result
     }
 }
 
