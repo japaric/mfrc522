@@ -1,3 +1,9 @@
+This repository is no longer maintained! Last release of this repository on crates.io was v0.2.0.
+Ownership over the `mfrc522` crate on crates.io has been transferred to [`@jspngh`](https://github.com/jspngh).
+`@jspngh` maintains a MFRC522 driver crate at https://gitlab.com/jspngh/rfid-rs
+
+---
+
 # `mfrc522`
 
 > A platform agnostic driver to interface the MFRC522 (RFID reader/writer)
