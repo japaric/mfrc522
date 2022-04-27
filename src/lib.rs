@@ -374,8 +374,9 @@ where
 
     fn write_many(&mut self, reg: Register, bytes: &[u8]) -> Result<(), E> {
         self.with_nss_low(|mfr| {
-            mfr.spi.write(&[reg.write_address()])?;
-            mfr.spi.write(bytes)?;
+            for byte in bytes {
+                self.spi.write(&[reg.write_address(), *byte])?;
+            }
 
             Ok(())
         })
